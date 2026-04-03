@@ -20,6 +20,7 @@ local character, hrp, hum
 
 local progressBarBg, progressFill, percentLabel
 local speedBox, stealBox, jumpBox
+local radiusBox  -- Added radiusBox for steal radius input
 
 local autoStealEnabled    = false
 local isStealing          = false
@@ -62,7 +63,8 @@ local lastUseMedusa      = 0
 local AutoMedusaEnabled  = false
 local MedusaInitialized  = false
 
-local AS         = { animalCache={}, promptCache={}, stealCache={}, stealConn=nil }
+-- IMPROVED AUTO STEAL with radius sync
+local AS         = { animalCache={}, promptCache={}, stealCache={}, stealConn=nil, scanRunning=false }
 local AnimalsData= {}
 
 local espConnections = {}
@@ -87,6 +89,9 @@ local buttonsLocked = false
 local fullAutoPlayLeftEnabled = false
 local fullAutoPlayRightEnabled = false
 local autoPlayGui = nil
+
+local stealCirclePart = nil
+local stealCircleConnection = nil
 
 local function safe(label, fn, ...)
     local ok, err = pcall(fn, ...)
@@ -170,6 +175,40 @@ local function updateSpeedDisplay()
 end
 
 RunService.RenderStepped:Connect(updateSpeedDisplay)
+
+-- ==================== STEAL CIRCLE FUNCTIONS ====================
+local function hideStealCircle()
+    if stealCirclePart then
+        stealCirclePart:Destroy()
+        stealCirclePart = nil
+    end
+end
+
+local function createOrUpdateStealCircle(radius)
+    if not stealCirclePart then
+        stealCirclePart = Instance.new("Part")
+        stealCirclePart.Name = "StealCircle"
+        stealCirclePart.Anchored = true
+        stealCirclePart.CanCollide = false
+        stealCirclePart.Transparency = 0.7
+        stealCirclePart.Material = Enum.Material.Neon
+        stealCirclePart.Color = Color3.fromRGB(0, 120, 255)
+        stealCirclePart.Shape = Enum.PartType.Cylinder
+        stealCirclePart.Size = Vector3.new(0.05, radius * 2, radius * 2)
+        stealCirclePart.Parent = workspace
+    else
+        stealCirclePart.Size = Vector3.new(0.05, radius * 2, radius * 2)
+    end
+end
+
+local function updateStealCirclePosition()
+    if stealCirclePart and lp.Character then
+        local rootPart = lp.Character:FindFirstChild("HumanoidRootPart")
+        if rootPart then
+            stealCirclePart.CFrame = CFrame.new(rootPart.Position + Vector3.new(0, -2.5, 0)) * CFrame.Angles(0, 0, math.rad(90))
+        end
+    end
+end
 
 -- ==================== AUTO PLAY ====================
 local fullAutoPlayLeftConn = nil
@@ -414,7 +453,7 @@ function destroyAutoPlayGui()
     if autoPlayGui then autoPlayGui:Destroy(); autoPlayGui=nil end
 end
 
--- ==================== RESET SETTINGS (FIXED) ====================
+-- ==================== RESET SETTINGS ====================
 local function applyToggleAction(text, enabled)
     safe("Toggle:"..text, function()
         if text == "Speed Customizer" then
@@ -452,7 +491,6 @@ local function applyToggleAction(text, enabled)
     end)
 end
 
--- Default states for every toggle
 local TOGGLE_DEFAULTS = {
     ["Bat Aimbot"]        = false,
     ["Auto Steal Nearest"]= false,
@@ -472,7 +510,6 @@ local TOGGLE_DEFAULTS = {
     ["FOV Changer"]       = false,
 }
 
--- toggleButtonRefs holds {fireToggle=fn, getState=fn} for each toggle by name
 local toggleButtonRefs = {}
 
 local function resetAllSettings()
@@ -487,6 +524,7 @@ local function resetAllSettings()
     if speedBox then speedBox.Text = "59" end
     if stealBox then stealBox.Text = "30" end
     if jumpBox  then jumpBox.Text  = "60" end
+    if radiusBox then radiusBox.Text = "7.4" end
 
     pcall(function() workspace.CurrentCamera.FieldOfView = 70 end)
 
@@ -495,7 +533,6 @@ local function resetAllSettings()
     if batAimbotEnabled         then stopBatAimbot()     end
     if galaxyOn                 then disableGalaxy()     end
 
-    -- FIXED: set each toggle to its default via the button ref
     for name, defaultOn in pairs(TOGGLE_DEFAULTS) do
         local ref = toggleButtonRefs[name]
         if ref then
@@ -504,10 +541,14 @@ local function resetAllSettings()
                 ref.fireToggle()
             end
         else
-            -- fallback: apply action directly
             applyToggleAction(name, defaultOn)
         end
         configToggles[name] = defaultOn
+    end
+
+    -- Update steal circle if enabled
+    if autoStealEnabled then
+        createOrUpdateStealCircle(STEAL_RADIUS)
     end
 
     pcall(saveConfig)
@@ -1118,8 +1159,9 @@ do
     end
 end
 
--- ==================== AUTO STEAL ====================
+-- ==================== IMPROVED AUTO STEAL (with radius sync) ====================
 do
+    -- Load animal data
     pcall(function()
         local datas = ReplicatedStorage:FindFirstChild("Datas")
         if datas then
@@ -1195,6 +1237,7 @@ do
         for _, p in ipairs(att:GetChildren()) do
             if p:IsA("ProximityPrompt") then AS.promptCache[ad.uid] = p; return p end
         end
+        return nil
     end
 
     local function asBuildCallbacks(prompt)
@@ -1303,9 +1346,19 @@ do
     function setAutoSteal(state)
         if autoStealEnabled == state then return end
         autoStealEnabled = state
-        if state then startAutoSteal() else stopAutoSteal() end
+        if state then 
+            startAutoSteal()
+            createOrUpdateStealCircle(STEAL_RADIUS)
+            if stealCircleConnection then stealCircleConnection:Disconnect() end
+            stealCircleConnection = RunService.RenderStepped:Connect(updateStealCirclePosition)
+        else 
+            stopAutoSteal()
+            hideStealCircle()
+            if stealCircleConnection then stealCircleConnection:Disconnect(); stealCircleConnection = nil end
+        end
     end
 
+    -- Initial scan
     task.spawn(function()
         task.wait(2)
         local plots = workspace:WaitForChild("Plots", 10)
@@ -1848,7 +1901,8 @@ percentLabel.TextColor3 = Color3.fromRGB(220,220,220)
 percentLabel.Text = "0%"
 percentLabel.Parent = progressBarBg
 
-local radiusBox = Instance.new("TextBox")
+-- Steal Radius Input Box (syncs with the steal circle)
+radiusBox = Instance.new("TextBox")
 radiusBox.Size = UDim2.new(0.42,0,1,0)
 radiusBox.Position = UDim2.new(0.57,0,0,0)
 radiusBox.BackgroundColor3 = Color3.fromRGB(20,20,20)
@@ -1861,46 +1915,16 @@ radiusBox.Text = tostring(STEAL_RADIUS)
 radiusBox.Parent = progressBarBg
 Instance.new("UICorner", radiusBox).CornerRadius = UDim.new(0,4)
 
-local stealSquarePart = nil
-local circleConnection = nil
-
-local function hideSquare()
-    if stealSquarePart then stealSquarePart:Destroy(); stealSquarePart = nil end
-end
-
-local function createOrUpdateSquare(radius)
-    if not stealSquarePart then
-        stealSquarePart = Instance.new("Part")
-        stealSquarePart.Name = "StealCircle"
-        stealSquarePart.Anchored = true
-        stealSquarePart.CanCollide = false
-        stealSquarePart.Transparency = 0.7
-        stealSquarePart.Material = Enum.Material.Neon
-        stealSquarePart.Color = Color3.fromRGB(0,120,255)
-        stealSquarePart.Shape = Enum.PartType.Cylinder
-        stealSquarePart.Size = Vector3.new(0.05, radius*2, radius*2)
-        stealSquarePart.Parent = workspace
-    else
-        stealSquarePart.Size = Vector3.new(0.05, radius*2, radius*2)
-    end
-end
-
-local function updateSquarePosition()
-    if stealSquarePart and lp.Character then
-        local r = lp.Character:FindFirstChild("HumanoidRootPart")
-        if r then
-            stealSquarePart.CFrame = CFrame.new(r.Position + Vector3.new(0,-2.5,0)) * CFrame.Angles(0,0,math.rad(90))
-        end
-    end
-end
-
+-- Update radius when text box changes
 radiusBox.FocusLost:Connect(function()
     local num = tonumber(radiusBox.Text:gsub("%D",""))
     if num then
         num = math.clamp(num, 1, 50)
         STEAL_RADIUS = num
         radiusBox.Text = tostring(num)
-        createOrUpdateSquare(STEAL_RADIUS)
+        if autoStealEnabled then
+            createOrUpdateStealCircle(STEAL_RADIUS)
+        end
         pcall(saveConfig)
     else
         radiusBox.Text = tostring(STEAL_RADIUS)
@@ -2291,7 +2315,6 @@ local function CreateSlider(sectionName, labelText, minVal, maxVal, currentVal, 
     end)
 end
 
--- FIXED: CreateToggle now registers itself in toggleButtonRefs
 local function CreateToggle(sectionName, text, defaultOn)
     local parentFrame = sectionFrames[sectionName]
     local container = Instance.new("Frame")
@@ -2342,21 +2365,11 @@ local function CreateToggle(sectionName, text, defaultOn)
         configToggles[text] = enabled
         pcall(saveConfig)
         applyToggleAction(text, enabled)
-        -- also handle Auto Steal circle here since it needs closures
         if text == "Auto Steal Nearest" then
             setAutoSteal(enabled)
-            if enabled then
-                createOrUpdateSquare(STEAL_RADIUS)
-                if circleConnection then circleConnection:Disconnect() end
-                circleConnection = RunService.RenderStepped:Connect(updateSquarePosition)
-            else
-                hideSquare()
-                if circleConnection then circleConnection:Disconnect(); circleConnection = nil end
-            end
         end
     end
 
-    -- FIXED: register in toggleButtonRefs so resetAllSettings can call fireToggle
     toggleButtonRefs[text] = {
         fireToggle = fireToggle,
         getState   = function() return enabled end,
@@ -2656,3 +2669,4 @@ end)
 print("Nova Hub Loaded")
 print("Keybinds: Z = Auto Left | C = Auto Right")
 print("Speed display above head shows your current speed")
+print("Auto Steal radius can be changed in the progress bar UI")
