@@ -79,7 +79,7 @@ local speedDisplayBillboard = nil
 local speedDisplayText = nil
 
 local DRAG_THRESHOLD = 6
-local buttonsLocked = false
+local buttonsLocked = false  -- THIS WILL BE AUTO-SAVED
 
 local stealCirclePart = nil
 local stealCircleConnection = nil
@@ -382,7 +382,7 @@ local function resetAllSettings()
     goingSpeed     = 59
     returnSpeed    = 30
     FOV_VALUE      = 70
-    buttonsLocked  = false
+    buttonsLocked  = false  -- RESET LOCK BUTTON TOO
 
     if speedBox then speedBox.Text = "59" end
     if stealBox then stealBox.Text = "30" end
@@ -411,6 +411,12 @@ local function resetAllSettings()
 
     if autoStealEnabled then
         createOrUpdateStealCircle(STEAL_RADIUS)
+    end
+
+    -- Update lock button UI after reset
+    if lockBtn and lockCircle then
+        updateLockButtonUI()
+        applyButtonLockToAll()
     end
 
     pcall(saveConfig)
@@ -1693,7 +1699,7 @@ local function loadConfigEarly()
     if data.sc_going   then goingSpeed  = data.sc_going  end
     if data.sc_return  then returnSpeed = data.sc_return end
     if data.sc_active ~= nil then _G._novaScActive = data.sc_active end
-    if data.buttons_locked ~= nil then buttonsLocked = data.buttons_locked end
+    if data.buttons_locked ~= nil then buttonsLocked = data.buttons_locked end  -- AUTO-LOAD LOCK STATE
     local i = 0
     while true do
         local name = data["tn_"..i]
@@ -1706,6 +1712,8 @@ end
 pcall(loadConfigEarly)
 
 -- ==================== AUTO PLAY GUI ====================
+local autoPlayGui = nil
+
 function createAutoPlayGui()
     if autoPlayGui then return end
     autoPlayGui = Instance.new("ScreenGui")
@@ -2062,12 +2070,15 @@ lockBtn.MouseButton1Click:Connect(function()
     buttonsLocked = not buttonsLocked
     updateLockButtonUI()
     applyButtonLockToAll()
-    pcall(saveConfig)
+    pcall(saveConfig)  -- AUTO-SAVE WHEN LOCK BUTTON IS TOGGLED
 end)
 
+-- RESTORE LOCK STATE AFTER GUI CREATION
 if buttonsLocked then
-    updateLockButtonUI()
-    task.defer(applyButtonLockToAll)
+    task.defer(function()
+        updateLockButtonUI()
+        applyButtonLockToAll()
+    end)
 end
 
 -- RESET BUTTON
@@ -2533,7 +2544,7 @@ saveConfig = function()
     data.sc_active     = _G._novaScActive or false
     data.fov_value     = FOV_VALUE
     data.gui_scale     = guiScale
-    data.buttons_locked= buttonsLocked
+    data.buttons_locked= buttonsLocked  -- AUTO-SAVE LOCK STATE
 
     if toggleBtn     and toggleBtn.Parent     then savedBtnX    = toggleBtn.AbsolutePosition.X;    savedBtnY    = toggleBtn.AbsolutePosition.Y    end
     if mainHubFrame  and mainHubFrame.Parent  then savedHubX    = mainHubFrame.AbsolutePosition.X; savedHubY    = mainHubFrame.AbsolutePosition.Y end
