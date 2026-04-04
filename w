@@ -32,7 +32,12 @@ local batAimbotEnabled    = false
 local infiniteJumpEnabled = true
 local noWalkAnimEnabled   = false
 local configToggles       = {}
-local saveConfig
+
+-- FIX: saveConfig is declared upfront as a real function placeholder
+-- so all closures that call pcall(saveConfig) will always find the real function.
+-- The actual implementation is assigned at the bottom, but we pre-declare it
+-- as a no-op so early closures never capture nil.
+local saveConfig = function() end  -- FIX: was just `local saveConfig` (nil)
 
 local savedBtnX, savedBtnY
 local savedHubX, savedHubY
@@ -43,6 +48,14 @@ local savedAimbotX, savedAimbotY
 local savedTauntX, savedTauntY
 local savedDropX, savedDropY
 local savedTpDownX, savedTpDownY
+
+-- FIX: Track whether saved positions have been applied yet so the
+-- AbsolutePosition signal doesn't overwrite loaded positions on first fire.
+local _positionsApplied = {
+    btn=false, hub=false, top=false, main=false,
+    autoPlay=false, aimbot=false, taunt=false,
+    drop=false, tpdown=false,
+}
 
 local FOV_VALUE        = 70
 local guiScale         = 1
@@ -79,7 +92,7 @@ local speedDisplayBillboard = nil
 local speedDisplayText = nil
 
 local DRAG_THRESHOLD = 6
-local buttonsLocked = false  -- THIS WILL BE AUTO-SAVED
+local buttonsLocked = false
 
 local stealCirclePart = nil
 local stealCircleConnection = nil
@@ -382,7 +395,7 @@ local function resetAllSettings()
     goingSpeed     = 59
     returnSpeed    = 30
     FOV_VALUE      = 70
-    buttonsLocked  = false  -- RESET LOCK BUTTON TOO
+    buttonsLocked  = false
 
     if speedBox then speedBox.Text = "59" end
     if stealBox then stealBox.Text = "30" end
@@ -413,7 +426,6 @@ local function resetAllSettings()
         createOrUpdateStealCircle(STEAL_RADIUS)
     end
 
-    -- Update lock button UI after reset
     if lockBtn and lockCircle then
         updateLockButtonUI()
         applyButtonLockToAll()
@@ -619,7 +631,6 @@ do
         batAimbotGui.Parent = CoreGui
         batButton = Instance.new("TextButton")
         batButton.Size = UDim2.new(0, 120, 0, 50)
-        batButton.Position = UDim2.new(1, -135, 0, 155)
         batButton.Text = "🏏 AIMBOT"
         batButton.Font = Enum.Font.GothamBold
         batButton.TextSize = 16
@@ -629,7 +640,19 @@ do
         batButton.Draggable = true
         batButton.Parent = batAimbotGui
         Instance.new("UICorner", batButton).CornerRadius = UDim.new(0, 16)
+
+        -- FIX: Apply saved position FIRST before connecting the signal.
+        -- This prevents the signal from firing with the default position
+        -- and overwriting our loaded saved coordinates.
+        if savedAimbotX and savedAimbotY then
+            batButton.Position = UDim2.new(0, savedAimbotX, 0, savedAimbotY)
+        else
+            batButton.Position = UDim2.new(1, -135, 0, 155)
+        end
+        _positionsApplied.aimbot = true
+
         batButton:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+            if not _positionsApplied.aimbot then return end  -- FIX: ignore initial fires
             savedAimbotX = batButton.AbsolutePosition.X
             savedAimbotY = batButton.AbsolutePosition.Y
             pcall(saveConfig)
@@ -638,14 +661,12 @@ do
             if buttonsLocked then batButton.Draggable = false end
         end)
         makeDragSafeClick(batButton, toggleBatAimbot)
-        if savedAimbotX and savedAimbotY then
-            batButton.Position = UDim2.new(0, savedAimbotX, 0, savedAimbotY)
-        end
     end
 
     function destroyBatAimbotGui()
         stopBatAimbot()
         if batAimbotGui then batAimbotGui:Destroy(); batAimbotGui = nil; batButton = nil end
+        _positionsApplied.aimbot = false
     end
 
     lp.CharacterAdded:Connect(function(char)
@@ -676,7 +697,6 @@ do
         fovGui.Parent = CoreGui
         fovFrame = Instance.new("Frame", fovGui)
         fovFrame.Size = UDim2.new(0,200,0,60)
-        fovFrame.Position = UDim2.new(0,10,0.5,-30)
         fovFrame.BackgroundColor3 = Color3.fromRGB(20,20,40)
         fovFrame.BackgroundTransparency = 0.1
         fovFrame.Active = true
@@ -720,7 +740,17 @@ do
         plus.TextColor3 = Color3.fromRGB(255,255,255)
         plus.TextSize = 18
         Instance.new("UICorner", plus).CornerRadius = UDim.new(0,6)
+
+        -- FIX: Apply saved position BEFORE connecting the signal.
+        if savedTopX and savedTopY then
+            fovFrame.Position = UDim2.new(0, savedTopX, 0, savedTopY)
+        else
+            fovFrame.Position = UDim2.new(0,10,0.5,-30)
+        end
+        _positionsApplied.top = true
+
         fovFrame:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+            if not _positionsApplied.top then return end  -- FIX
             savedTopX = fovFrame.AbsolutePosition.X
             savedTopY = fovFrame.AbsolutePosition.Y
             pcall(saveConfig)
@@ -736,13 +766,11 @@ do
             if v then setFOV(v) end
             valueBox.Text = tostring(FOV_VALUE)
         end)
-        if savedTopX and savedTopY then
-            fovFrame.Position = UDim2.new(0, savedTopX, 0, savedTopY)
-        end
     end
 
     function destroyFovGui()
         if fovGui then fovGui:Destroy(); fovGui = nil; fovFrame = nil end
+        _positionsApplied.top = false
     end
 end
 
@@ -767,7 +795,6 @@ function createTpDownGui()
     tpDownGui.Parent = CoreGui
     tpDownButton = Instance.new("TextButton")
     tpDownButton.Size = UDim2.new(0,130,0,50)
-    tpDownButton.Position = UDim2.new(0,10,0,130)
     tpDownButton.Text = "⬇ TP DOWN"
     tpDownButton.Font = Enum.Font.GothamBold
     tpDownButton.TextSize = 16
@@ -780,7 +807,17 @@ function createTpDownGui()
     tpDownButton:GetPropertyChangedSignal("Draggable"):Connect(function()
         if buttonsLocked then tpDownButton.Draggable = false end
     end)
+
+    -- FIX: Apply saved position BEFORE connecting the AbsolutePosition signal.
+    if savedTpDownX and savedTpDownY then
+        tpDownButton.Position = UDim2.new(0, savedTpDownX, 0, savedTpDownY)
+    else
+        tpDownButton.Position = UDim2.new(0,10,0,130)
+    end
+    _positionsApplied.tpdown = true
+
     tpDownButton:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+        if not _positionsApplied.tpdown then return end  -- FIX
         savedTpDownX = tpDownButton.AbsolutePosition.X
         savedTpDownY = tpDownButton.AbsolutePosition.Y
         pcall(saveConfig)
@@ -794,13 +831,11 @@ function createTpDownGui()
         end)
     end
     makeDragSafeClick(tpDownButton, function() tpDownAction(); animateClick() end)
-    if savedTpDownX and savedTpDownY then
-        tpDownButton.Position = UDim2.new(0, savedTpDownX, 0, savedTpDownY)
-    end
 end
 
 function destroyTpDownGui()
     if tpDownGui then tpDownGui:Destroy(); tpDownGui = nil; tpDownButton = nil end
+    _positionsApplied.tpdown = false
 end
 
 _G._novaTpDown = tpDownAction
@@ -863,7 +898,6 @@ do
         tauntGui.Parent = CoreGui
         tauntButton = Instance.new("TextButton")
         tauntButton.Size = UDim2.new(0,120,0,50)
-        tauntButton.Position = UDim2.new(0,150,0,130)
         tauntButton.Text = "💬 TAUNT"
         tauntButton.Font = Enum.Font.GothamBold
         tauntButton.TextSize = 16
@@ -876,20 +910,28 @@ do
         tauntButton:GetPropertyChangedSignal("Draggable"):Connect(function()
             if buttonsLocked then tauntButton.Draggable = false end
         end)
+
+        -- FIX: Apply saved position BEFORE connecting the signal.
+        if savedTauntX and savedTauntY then
+            tauntButton.Position = UDim2.new(0, savedTauntX, 0, savedTauntY)
+        else
+            tauntButton.Position = UDim2.new(0,150,0,130)
+        end
+        _positionsApplied.taunt = true
+
         tauntButton:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+            if not _positionsApplied.taunt then return end  -- FIX
             savedTauntX = tauntButton.AbsolutePosition.X
             savedTauntY = tauntButton.AbsolutePosition.Y
             pcall(saveConfig)
         end)
         makeDragSafeClick(tauntButton, toggleTaunt)
-        if savedTauntX and savedTauntY then
-            tauntButton.Position = UDim2.new(0, savedTauntX, 0, savedTauntY)
-        end
     end
 
     function destroyTauntGui()
         stopTaunt()
         if tauntGui then tauntGui:Destroy(); tauntGui = nil; tauntButton = nil end
+        _positionsApplied.taunt = false
     end
 end
 
@@ -968,7 +1010,6 @@ do
         dropGui.Parent = CoreGui
         dropButton = Instance.new("TextButton")
         dropButton.Size = UDim2.new(0,120,0,50)
-        dropButton.Position = UDim2.new(1,-135,0,290)
         dropButton.Text = "DROP"
         dropButton.Font = Enum.Font.GothamBold
         dropButton.TextSize = 18
@@ -981,7 +1022,17 @@ do
         dropButton:GetPropertyChangedSignal("Draggable"):Connect(function()
             if buttonsLocked then dropButton.Draggable = false end
         end)
+
+        -- FIX: Apply saved position BEFORE connecting the signal.
+        if savedDropX and savedDropY then
+            dropButton.Position = UDim2.new(0, savedDropX, 0, savedDropY)
+        else
+            dropButton.Position = UDim2.new(1,-135,0,290)
+        end
+        _positionsApplied.drop = true
+
         dropButton:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+            if not _positionsApplied.drop then return end  -- FIX
             savedDropX = dropButton.AbsolutePosition.X
             savedDropY = dropButton.AbsolutePosition.Y
             pcall(saveConfig)
@@ -992,15 +1043,13 @@ do
             dropButton.BackgroundColor3 = Color3.fromRGB(200,0,0)
             task.spawn(doDropBrainrot)
         end)
-        if savedDropX and savedDropY then
-            dropButton.Position = UDim2.new(0, savedDropX, 0, savedDropY)
-        end
     end
 
     function destroyDropGui()
         dropActive = false
         stopWalkFling()
         if dropGui then dropGui:Destroy(); dropGui = nil; dropButton = nil end
+        _positionsApplied.drop = false
     end
 end
 
@@ -1699,7 +1748,7 @@ local function loadConfigEarly()
     if data.sc_going   then goingSpeed  = data.sc_going  end
     if data.sc_return  then returnSpeed = data.sc_return end
     if data.sc_active ~= nil then _G._novaScActive = data.sc_active end
-    if data.buttons_locked ~= nil then buttonsLocked = data.buttons_locked end  -- AUTO-LOAD LOCK STATE
+    if data.buttons_locked ~= nil then buttonsLocked = data.buttons_locked end
     local i = 0
     while true do
         local name = data["tn_"..i]
@@ -1722,7 +1771,6 @@ function createAutoPlayGui()
     autoPlayGui.Parent = CoreGui
     local frame = Instance.new("Frame", autoPlayGui)
     frame.Size = UDim2.new(0,180,0,65)
-    frame.Position = UDim2.new(1,-190,0,10)
     frame.BackgroundColor3 = Color3.fromRGB(0,0,0)
     frame.BackgroundTransparency = 0.25
     frame.Active = true; frame.Draggable = true
@@ -1771,16 +1819,23 @@ function createAutoPlayGui()
         if aprOn then stopAutoPlayRight() else startAutoPlayRight() end
         updateButtons()
     end)
+
+    -- FIX: Apply saved position BEFORE connecting the AbsolutePosition signal.
+    if savedAutoPlayX and savedAutoPlayY then
+        frame.Position = UDim2.new(0, savedAutoPlayX, 0, savedAutoPlayY)
+    else
+        frame.Position = UDim2.new(1,-190,0,10)
+    end
+    _positionsApplied.autoPlay = true
+
     frame:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+        if not _positionsApplied.autoPlay then return end  -- FIX
         savedAutoPlayX=frame.AbsolutePosition.X; savedAutoPlayY=frame.AbsolutePosition.Y
         pcall(saveConfig)
     end)
     frame:GetPropertyChangedSignal("Draggable"):Connect(function()
         if buttonsLocked then frame.Draggable = false end
     end)
-    if savedAutoPlayX and savedAutoPlayY then
-        frame.Position=UDim2.new(0,savedAutoPlayX,0,savedAutoPlayY)
-    end
     updateButtons()
     RunService.Heartbeat:Connect(updateButtons)
 end
@@ -1789,6 +1844,7 @@ function destroyAutoPlayGui()
     stopAutoPlayLeft()
     stopAutoPlayRight()
     if autoPlayGui then autoPlayGui:Destroy(); autoPlayGui=nil end
+    _positionsApplied.autoPlay = false
 end
 
 -- ==================== MAIN HUB GUI ====================
@@ -1888,7 +1944,6 @@ end)
 
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Size = UDim2.new(0,55,0,55)
-toggleBtn.Position = UDim2.new(1,-70,0,70)
 toggleBtn.BackgroundColor3 = Color3.fromRGB(0,120,255)
 toggleBtn.Text = "\u{2261}"
 toggleBtn.Font = Enum.Font.GothamBold
@@ -1898,8 +1953,17 @@ toggleBtn.Active = true
 toggleBtn.Draggable = true
 toggleBtn.Parent = sg
 Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,14)
-if savedBtnX and savedBtnY then toggleBtn.Position = UDim2.new(0, savedBtnX, 0, savedBtnY) end
+
+-- FIX: Apply saved position BEFORE connecting the AbsolutePosition signal.
+if savedBtnX and savedBtnY then
+    toggleBtn.Position = UDim2.new(0, savedBtnX, 0, savedBtnY)
+else
+    toggleBtn.Position = UDim2.new(1,-70,0,70)
+end
+_positionsApplied.btn = true
+
 toggleBtn:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+    if not _positionsApplied.btn then return end  -- FIX
     savedBtnX = toggleBtn.AbsolutePosition.X
     savedBtnY = toggleBtn.AbsolutePosition.Y
     pcall(saveConfig)
@@ -1917,7 +1981,6 @@ local HUB_WIDTH  = 280
 local HUB_HEIGHT = 430
 local hub = Instance.new("Frame")
 hub.Size = UDim2.new(0, HUB_WIDTH, 0, HUB_HEIGHT)
-hub.Position = UDim2.new(0, -350, 0.5, -HUB_HEIGHT/2)
 hub.BackgroundColor3 = Color3.fromRGB(0,0,0)
 hub.BackgroundTransparency = 0.25
 hub.Active = true
@@ -1927,8 +1990,17 @@ Instance.new("UICorner", hub).CornerRadius = UDim.new(0,14)
 local strokeHub = Instance.new("UIStroke", hub)
 strokeHub.Color = Color3.fromRGB(0,120,255)
 strokeHub.Thickness = 2
-if savedHubX and savedHubY then hub.Position = UDim2.new(0, savedHubX, 0, savedHubY) end
+
+-- FIX: Apply saved position BEFORE connecting the AbsolutePosition signal.
+if savedHubX and savedHubY then
+    hub.Position = UDim2.new(0, savedHubX, 0, savedHubY)
+else
+    hub.Position = UDim2.new(0, -350, 0.5, -HUB_HEIGHT/2)
+end
+_positionsApplied.hub = true
+
 hub:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+    if not _positionsApplied.hub then return end  -- FIX
     savedHubX = hub.AbsolutePosition.X
     savedHubY = hub.AbsolutePosition.Y
     pcall(saveConfig)
@@ -2070,10 +2142,10 @@ lockBtn.MouseButton1Click:Connect(function()
     buttonsLocked = not buttonsLocked
     updateLockButtonUI()
     applyButtonLockToAll()
-    pcall(saveConfig)  -- AUTO-SAVE WHEN LOCK BUTTON IS TOGGLED
+    pcall(saveConfig)
 end)
 
--- RESTORE LOCK STATE AFTER GUI CREATION
+-- Restore lock state after GUI creation
 if buttonsLocked then
     task.defer(function()
         updateLockButtonUI()
@@ -2371,7 +2443,6 @@ local ok_sc, err_sc = pcall(function()
 
     local main = Instance.new("Frame")
     main.Size = UDim2.new(0,240,0,215)
-    main.Position = UDim2.new(0.5,-120,0.15,0)
     main.BackgroundColor3 = Color3.fromRGB(0,0,0)
     main.BackgroundTransparency = 0.35
     main.Active = true
@@ -2381,8 +2452,17 @@ local ok_sc, err_sc = pcall(function()
     local scStroke = Instance.new("UIStroke", main)
     scStroke.Color = Color3.fromRGB(0,120,255)
     scStroke.Thickness = 2
-    if savedMainX and savedMainY then main.Position = UDim2.new(0, savedMainX, 0, savedMainY) end
+
+    -- FIX: Apply saved position BEFORE connecting the signal.
+    if savedMainX and savedMainY then
+        main.Position = UDim2.new(0, savedMainX, 0, savedMainY)
+    else
+        main.Position = UDim2.new(0.5,-120,0.15,0)
+    end
+    _positionsApplied.main = true
+
     main:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+        if not _positionsApplied.main then return end  -- FIX
         savedMainX = main.AbsolutePosition.X
         savedMainY = main.AbsolutePosition.Y
         pcall(saveConfig)
@@ -2533,7 +2613,10 @@ end
 if lp.Character then task.spawn(function() onCharacterAdded(lp.Character) end) end
 lp.CharacterAdded:Connect(onCharacterAdded)
 
--- ==================== SAVE CONFIG ====================
+-- ==================== SAVE CONFIG (REAL IMPLEMENTATION) ====================
+-- FIX: This replaces the no-op placeholder assigned at the top.
+-- All closures that captured saveConfig will now call this real function
+-- because Lua upvalues are references, not copies.
 saveConfig = function()
     local data = {}
     data.steal_radius  = STEAL_RADIUS
@@ -2544,7 +2627,7 @@ saveConfig = function()
     data.sc_active     = _G._novaScActive or false
     data.fov_value     = FOV_VALUE
     data.gui_scale     = guiScale
-    data.buttons_locked= buttonsLocked  -- AUTO-SAVE LOCK STATE
+    data.buttons_locked= buttonsLocked
 
     if toggleBtn     and toggleBtn.Parent     then savedBtnX    = toggleBtn.AbsolutePosition.X;    savedBtnY    = toggleBtn.AbsolutePosition.Y    end
     if mainHubFrame  and mainHubFrame.Parent  then savedHubX    = mainHubFrame.AbsolutePosition.X; savedHubY    = mainHubFrame.AbsolutePosition.Y end
